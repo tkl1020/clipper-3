@@ -21,15 +21,37 @@ class TranscriptionWorker(QThread):
     progress = pyqtSignal(int)
     live_update = pyqtSignal(str)
     finished = pyqtSignal(list)
+    partial_results = pyqtSignal(list)  # Add this signal for compatibility with GUI
 
     def __init__(self, model, audio_path):
         super().__init__()
         self.model = model
         self.audio_path = audio_path
         
-        # Import here to avoid circular imports
-        from utils import get_resource_limits
-        self.batch_size, self.max_workers = get_resource_limits()        
+        # Default batch and worker settings if psutil not available
+        self.batch_size = 10
+        self.max_workers = 2
+        
+        # Try to use psutil for adaptive resource management if available
+        if 'PSUTIL_AVAILABLE' in globals() and PSUTIL_AVAILABLE:
+            try:
+                # Adaptive batch sizing based on system resources
+                cpu_cores = psutil.cpu_count(logical=False) or 2
+                mem_available_gb = psutil.virtual_memory().available / (1024 * 1024 * 1024)
+                
+                # Adjust batch size based on available resources
+                if mem_available_gb > 8 and cpu_cores >= 4:
+                    self.batch_size = 20
+                elif mem_available_gb > 4 and cpu_cores >= 2:
+                    self.batch_size = 10
+                else:
+                    self.batch_size = 5
+                
+                self.max_workers = max(1, min(cpu_cores - 1, 4))  # Leave one core free
+            except Exception:
+                # Fall back to defaults if there's an error
+                pass
+                
         self.use_threading = True  # Enable parallel processing
 
     def run(self):
